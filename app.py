@@ -1,4 +1,3 @@
-
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import random, os, json, requests
@@ -22,7 +21,7 @@ default_widgets = [
 ]
 
 devices = {
-    "esp32_01": {"name": "esp32-01", "online": True, "datastreams": {"V0": {"value": 1}, "V1": {"value": 72}, "V2": {"value": 24.6}, "V3": {"value": 45}, "V4": {"value": 3.28}}},
+    "esp32_01": {"name": "esp32-01", "online": True, "datastreams": {"V0": {"value": 1}, "V1": {"value": 72}, "V2": {"value": 24.6}, "V3": {"value": 45}, "V4": {"value": 3.28}, "V5": {"value": 0}, "V6": {"value": 0}, "V7": {"value": 0}, "V8": {"value": 0}, "V9": {"value": 0}}},
 }
 widgets = default_widgets.copy()
 history = []
@@ -187,10 +186,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;heigh
 </div>
 
 <script>
+
 let widgets = [];
 let editMode = false;
 let selectedType = null;
-let v0=1,v1=72,v2=24.6,v3=45;
+let pinValues = {V0:1, V1:72, V2:24.6, V3:45, V4:3.28, V5:0, V6:0, V7:0, V8:0, V9:0};
 
 function toggleEdit(){
   editMode = !editMode;
@@ -233,12 +233,16 @@ async function addWidget(){
   const pin = document.getElementById('widget-pin').value;
   const icon = document.getElementById('widget-icon').value || '📦';
   const id = 'w' + Date.now();
-  const widget = {id, type: selectedType, pin, label, icon, color: '#00D4FF'};
+  const colors = {button:'#00D4FF', slider:'#6366F1', gauge:'#F59E0B', chart:'#00D4FF', value:'#22C55E', led:'#22C55E'};
+  const widget = {id, type: selectedType, pin, label, icon, color: colors[selectedType]||'#00D4FF'};
   
   widgets.push(widget);
+  // Initialize pin value if new
+  if(pinValues[pin] === undefined) pinValues[pin] = 0;
   await saveWidgets();
   renderWidgets();
   closeModal();
+  setTimeout(syncData, 200);
 }
 
 async function deleteWidget(id){
@@ -268,54 +272,79 @@ function renderWidgets(){
   
   grid.innerHTML = widgets.map(w => {
     let content = '';
+    const curVal = pinValues[w.pin] !== undefined ? pinValues[w.pin] : 0;
+    const isOn = curVal == 1 || curVal > 0;
+    
     if(w.type === 'button'){
-      content = `<button class="big-btn on" id="btn-${w.id}" onclick="togglePin('${w.pin}')"><div class="icon">${w.icon}</div><div id="text-${w.id}">ON</div></button>`;
+      content = `<button class="big-btn ${isOn ? 'on' : 'off'}" id="btn-${w.id}" onclick="togglePin('${w.pin}','${w.id}')"><div class="icon">${w.icon}</div><div id="text-${w.id}">${isOn ? 'ON' : 'OFF'}</div></button>`;
     } else if(w.type === 'slider'){
-      content = `<div class="big"><span id="val-${w.id}">72</span>%</div><input type="range" id="slider-${w.id}" min="0" max="100" value="72" oninput="setPin('${w.pin}', this.value, '${w.id}')">`;
+      content = `<div class="big"><span id="val-${w.id}">${curVal}</span>%</div><input type="range" id="slider-${w.id}" min="0" max="100" value="${curVal}" oninput="setPin('${w.pin}', this.value, '${w.id}')">`;
     } else if(w.type === 'gauge'){
-      content = `<div class="big"><span id="val-${w.id}">24.6</span>°C</div><div style="height:60px;background:#0F172A;border-radius:10px;margin-top:12px;display:flex;align-items:center;justify-content:center;font-size:24px">🌡️</div>`;
+      content = `<div class="big"><span id="val-${w.id}">${curVal}</span>°C</div><div style="height:60px;background:#0F172A;border-radius:10px;margin-top:12px;display:flex;align-items:center;justify-content:center;font-size:24px">🌡️</div>`;
     } else if(w.type === 'chart'){
-      content = `<div style="height:160px;background:#0F172A;border-radius:12px;padding:8px"><svg viewBox="0 0 400 100" style="width:100%;height:100%"><polyline id="chart-${w.id}" fill="none" stroke="#00D4FF" stroke-width="2" points="0,50 100,30 200,60 300,20 400,40"/></svg></div>`;
+      content = `<div style="height:160px;background:#0F172A;border-radius:12px;padding:8px"><svg viewBox="0 0 400 100" style="width:100%;height:100%"><polyline id="chart-${w.id}" fill="none" stroke="${w.color}" stroke-width="2" points="0,50 100,30 200,60 300,20 400,40"/></svg></div>`;
     } else if(w.type === 'value'){
-      content = `<div class="big"><span id="val-${w.id}">45</span><span style="font-size:14px;color:#64748B">%</span></div>`;
+      content = `<div class="big"><span id="val-${w.id}">${curVal}</span><span style="font-size:14px;color:#64748B">%</span></div>`;
     } else if(w.type === 'led'){
-      content = `<div style="width:40px;height:40px;background:#22C55E;border-radius:50%;margin:20px auto;box-shadow:0 0 20px #22C55E" id="led-${w.id}"></div><div style="text-align:center;font-size:12px" id="val-${w.id}">ON</div>`;
+      content = `<div style="width:40px;height:40px;background:${isOn ? '#22C55E' : '#334155'};border-radius:50%;margin:20px auto;box-shadow:0 0 20px ${isOn ? '#22C55E' : 'transparent'}" id="led-${w.id}"></div><div style="text-align:center;font-size:12px" id="val-${w.id}">${isOn ? 'ON' : 'OFF'}</div>`;
     }
     
     return `
       <div class="card ${editMode ? 'edit-mode' : ''}" id="card-${w.id}">
         <div class="delete-btn" onclick="deleteWidget('${w.id}')">×</div>
         <div class="card-header">
-          <div class="card-title"><div class="card-title-icon" style="background:rgba(0,212,255,0.2)">${w.icon}</div> ${w.label}</div>
+          <div class="card-title"><div class="card-title-icon" style="background:${w.color}20">${w.icon}</div> ${w.label}</div>
           <span class="pin-badge">${w.pin}</span>
         </div>
         ${content}
-        <div style="font-size:10px;color:#475569;margin-top:12px">Pin ${w.pin} • ${w.type}</div>
+        <div style="font-size:10px;color:#475569;margin-top:12px">Pin ${w.pin} • ${w.type} • Val: <span id="debug-${w.id}">${curVal}</span></div>
       </div>
     `;
   }).join('');
-  
-  // Update edit mode classes
-  document.querySelectorAll('.card').forEach(c => {
-    if(editMode) c.classList.add('edit-mode');
-  });
 }
 
-async function togglePin(pin){
-  const id = widgets.find(w => w.pin === pin)?.id;
-  if(!id) return;
-  const current = v0;
-  const newVal = current ? 0 : 1;
-  if(pin === 'V0') v0 = newVal;
-  await fetch(`/api/device/esp32_01/${pin}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({value: newVal})});
-  document.getElementById(`text-${id}`).textContent = newVal ? 'ON' : 'OFF';
-  document.getElementById(`btn-${id}`).className = 'big-btn ' + (newVal ? 'on' : 'off');
+async function togglePin(pin, widgetId){
+  const cur = pinValues[pin] !== undefined ? pinValues[pin] : 0;
+  const newVal = cur ? 0 : 1;
+  pinValues[pin] = newVal;
+  
+  // Update UI instantly
+  const btn = document.getElementById(`btn-${widgetId}`);
+  const txt = document.getElementById(`text-${widgetId}`);
+  const dbg = document.getElementById(`debug-${widgetId}`);
+  const led = document.getElementById(`led-${widgetId}`);
+  if(btn) btn.className = 'big-btn ' + (newVal ? 'on' : 'off');
+  if(txt) txt.textContent = newVal ? 'ON' : 'OFF';
+  if(dbg) dbg.textContent = newVal;
+  if(led) { led.style.background = newVal ? '#22C55E' : '#334155'; led.style.boxShadow = newVal ? '0 0 20px #22C55E' : 'none'; }
+  
+  // Also update all other widgets using same pin
+  widgets.filter(w => w.pin === pin && w.id !== widgetId).forEach(w => {
+    const otherBtn = document.getElementById(`btn-${w.id}`);
+    const otherTxt = document.getElementById(`text-${w.id}`);
+    const otherDbg = document.getElementById(`debug-${w.id}`);
+    const otherLed = document.getElementById(`led-${w.id}`);
+    if(otherBtn) otherBtn.className = 'big-btn ' + (newVal ? 'on' : 'off');
+    if(otherTxt) otherTxt.textContent = newVal ? 'ON' : 'OFF';
+    if(otherDbg) otherDbg.textContent = newVal;
+    if(otherLed) { otherLed.style.background = newVal ? '#22C55E' : '#334155'; }
+    const otherVal = document.getElementById(`val-${w.id}`);
+    if(otherVal && (w.type === 'led' || w.type === 'button')) otherVal.textContent = newVal ? 'ON' : 'OFF';
+  });
+  
+  try{
+    await fetch(`/api/device/esp32_01/${pin}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({value: newVal})});
+  }catch(e){ console.error(e); }
 }
 
 async function setPin(pin, val, widgetId){
+  pinValues[pin] = parseInt(val);
   document.getElementById(`val-${widgetId}`).textContent = val;
-  await fetch(`/api/device/esp32_01/${pin}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({value: parseInt(val)})});
-  if(pin === 'V1') v1 = parseInt(val);
+  const dbg = document.getElementById(`debug-${widgetId}`);
+  if(dbg) dbg.textContent = val;
+  try{
+    await fetch(`/api/device/esp32_01/${pin}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({value: parseInt(val)})});
+  }catch(e){}
 }
 
 async function loadWidgets(){
@@ -334,33 +363,41 @@ async function loadWidgets(){
 
 async function syncData(){
   try{
-    const r0 = await fetch('/api/device/esp32_01/V0'); const j0 = await r0.json();
-    if(j0.value !== undefined) v0 = j0.value;
-    const r1 = await fetch('/api/device/esp32_01/V1'); const j1 = await r1.json();
-    if(j1.value !== undefined) v1 = j1.value;
-    const r2 = await fetch('/api/device/esp32_01/V2'); const j2 = await r2.json();
-    if(j2.value !== undefined) v2 = j2.value;
-    const r3 = await fetch('/api/device/esp32_01/V3'); const j3 = await r3.json();
-    if(j3.value !== undefined) v3 = j3.value;
+    // Fetch all pins V0-V9
+    for(let i=0;i<=9;i++){
+      const pin = 'V'+i;
+      try{
+        const r = await fetch(`/api/device/esp32_01/${pin}`);
+        const j = await r.json();
+        if(j.value !== undefined){
+          pinValues[pin] = j.value;
+        }
+      }catch(e){}
+    }
     
+    // Update all widgets
     widgets.forEach(w => {
-      const valEl = document.getElementById(`val-${w.id}`);
-      const textEl = document.getElementById(`text-${w.id}`);
-      if(!valEl && !textEl) return;
-      let val = 0;
-      if(w.pin === 'V0') val = v0;
-      else if(w.pin === 'V1') val = v1;
-      else if(w.pin === 'V2') val = v2;
-      else if(w.pin === 'V3') val = v3;
+      const cur = pinValues[w.pin];
+      if(cur === undefined) return;
+      const dbg = document.getElementById(`debug-${w.id}`);
+      if(dbg) dbg.textContent = cur;
       
-      if(w.type === 'button' && textEl){
-        textEl.textContent = val ? 'ON' : 'OFF';
+      if(w.type === 'button'){
+        const txt = document.getElementById(`text-${w.id}`);
         const btn = document.getElementById(`btn-${w.id}`);
-        if(btn) btn.className = 'big-btn ' + (val ? 'on' : 'off');
-      } else if(valEl){
-        if(w.type === 'value' || w.type === 'gauge') valEl.textContent = val;
-        else if(w.type === 'slider') {
-          // Don't override if user is dragging
+        if(txt) txt.textContent = cur ? 'ON' : 'OFF';
+        if(btn) btn.className = 'big-btn ' + (cur ? 'on' : 'off');
+      } else if(w.type === 'led'){
+        const led = document.getElementById(`led-${w.id}`);
+        const valEl = document.getElementById(`val-${w.id}`);
+        if(led) { led.style.background = cur ? '#22C55E' : '#334155'; led.style.boxShadow = cur ? '0 0 20px #22C55E' : 'none'; }
+        if(valEl) valEl.textContent = cur ? 'ON' : 'OFF';
+      } else if(w.type !== 'chart'){
+        const valEl = document.getElementById(`val-${w.id}`);
+        if(valEl) valEl.textContent = cur;
+        const slider = document.getElementById(`slider-${w.id}`);
+        if(slider && document.activeElement !== slider){
+          slider.value = cur;
         }
       }
     });
@@ -368,12 +405,13 @@ async function syncData(){
 }
 
 loadWidgets();
-setInterval(syncData, 1000);
+setInterval(syncData, 1200);
 
 // Close modal on outside click
 document.getElementById('add-modal').addEventListener('click', (e) => {
   if(e.target.id === 'add-modal') closeModal();
 });
+
 </script></body></html>
 """
 
