@@ -11,9 +11,20 @@ FIREBASE_ENABLED = True
 FIREBASE_DB_URL = "https://blynkforge-cloud-default-rtdb.asia-southeast1.firebasedatabase.app"
 DATA_FILE = "/tmp/blynk_data.json"
 
+# Default widgets - like Blynk template
+default_widgets = [
+    {"id": "w0", "type": "button", "pin": "V0", "label": "Main Relay", "icon": "⏻", "color": "#00D4FF"},
+    {"id": "w1", "type": "slider", "pin": "V1", "label": "Brightness", "icon": "☰", "color": "#6366F1", "min": 0, "max": 100},
+    {"id": "w2", "type": "gauge", "pin": "V2", "label": "Temperature", "icon": "🌡️", "color": "#F59E0B", "unit": "°C"},
+    {"id": "w3", "type": "chart", "pin": "V2", "label": "SuperChart - Temp History", "icon": "📈", "color": "#00D4FF"},
+    {"id": "w4", "type": "value", "pin": "V3", "label": "Humidity", "icon": "💧", "color": "#22C55E", "unit": "%"},
+    {"id": "w5", "type": "value", "pin": "V4", "label": "Voltage", "icon": "⚡", "color": "#EF4444", "unit": "V"},
+]
+
 devices = {
     "esp32_01": {"name": "esp32-01", "online": True, "datastreams": {"V0": {"value": 1}, "V1": {"value": 72}, "V2": {"value": 24.6}, "V3": {"value": 45}, "V4": {"value": 3.28}}},
 }
+widgets = default_widgets.copy()
 history = []
 
 def firebase_put(path, data):
@@ -36,16 +47,19 @@ def firebase_get(path):
     return None
 
 def load_data():
-    global devices, history
+    global devices, history, widgets
     if FIREBASE_ENABLED:
+        fb_widgets = firebase_get("widgets")
+        if fb_widgets and isinstance(fb_widgets, list):
+            widgets = fb_widgets
+            print(f"Loaded {len(widgets)} widgets from Firebase")
         fb_devices = firebase_get("devices")
-        fb_history = firebase_get("history")
         if fb_devices:
             devices = fb_devices
-            print(f"Firebase devices loaded")
+        fb_history = firebase_get("history")
         if fb_history and isinstance(fb_history, list):
             history = [h for h in fb_history if h is not None][-300:]
-            print(f"Firebase history loaded: {len(history)}")
+            print(f"Loaded {len(history)} history")
             return
     try:
         if os.path.exists(DATA_FILE):
@@ -53,16 +67,18 @@ def load_data():
                 data = json.load(f)
                 devices = data.get('devices', devices)
                 history = data.get('history', [])[-300:]
+                widgets = data.get('widgets', widgets)
     except Exception as e:
         print(f"Load error: {e}")
 
 def save_data():
     try:
         with open(DATA_FILE, 'w') as f:
-            json.dump({"devices": devices, "history": history[-300:]}, f)
+            json.dump({"devices": devices, "history": history[-300:], "widgets": widgets}, f)
         if FIREBASE_ENABLED:
             firebase_put("devices", devices)
             firebase_put("history", history[-300:])
+            firebase_put("widgets", widgets)
     except Exception as e:
         print(f"Save error: {e}")
 
@@ -70,132 +86,310 @@ load_data()
 
 HTML = """
 <!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BlynkForge Cloud + Firebase + SuperChart Real History</title>
+<title>BlynkForge - Add/Delete Widgets Like Blynk</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 *{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',system-ui}
 body{background:#0F172A;color:#E2E8F0;display:flex;min-height:100vh}
 .sidebar{width:220px;background:#0F172A;border-right:1px solid #1E293B;padding:20px}
-.sidebar-item{padding:12px 16px;border-radius:12px;color:#64748B;font-size:13px}
+.sidebar-item{padding:12px 16px;border-radius:12px;color:#64748B;font-size:13px;cursor:pointer}
 .sidebar-item.active{background:#1E293B;color:#E2E8F0;border:1px solid #334155}
 .main{flex:1;display:flex;flex-direction:column}
-.topbar{padding:16px 24px;display:flex;justify-content:space-between;border-bottom:1px solid #1E293B}
+.topbar{padding:16px 24px;display:flex;justify-content:space-between;border-bottom:1px solid #1E293B;align-items:center}
 .badge{background:#1E293B;border:1px solid #334155;padding:6px 12px;border-radius:20px;font-size:11px;display:flex;align-items:center;gap:6px}
-.badge.live{color:#22C55E}.badge.firebase{color:#F59E0B;background:rgba(245,158,11,0.15);border-color:rgba(245,158,11,0.3)}
+.badge.live{color:#22C55E}.badge.firebase{color:#F59E0B;background:rgba(245,158,11,0.15)}
 .dot{width:8px;height:8px;background:#22C55E;border-radius:50%;box-shadow:0 0 8px #22C55E;animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+.btn-add{background:#00D4FF;color:#0F172A;padding:8px 16px;border-radius:20px;font-size:12px;font-weight:700;border:none;cursor:pointer;display:flex;align-items:center;gap:6px}
+.btn-edit{background:#1E293B;color:#94A3B8;padding:8px 16px;border-radius:20px;font-size:12px;font-weight:600;border:1px solid #334155;cursor:pointer}
+.btn-edit.active{background:#F59E0B;color:#0F172A;border-color:#F59E0B}
 .content{padding:24px;overflow-y:auto}
-.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-bottom:20px}
-.card{background:#1E293B;border:1px solid #334155;border-radius:20px;padding:20px}
-.card-header{display:flex;justify-content:space-between;margin-bottom:16px}
-.card-title{font-size:12px;color:#E2E8F0;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.card{background:#1E293B;border:1px solid #334155;border-radius:20px;padding:20px;position:relative;transition:all 0.2s}
+.card:hover{transform:translateY(-1px);border-color:#475569}
+.card.edit-mode{border:2px dashed #F59E0B;animation:shake 0.5s}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-2px)}75%{transform:translateX(2px)}}
+.card-header{display:flex;justify-content:space-between;margin-bottom:16px;align-items:center}
+.card-title{font-size:12px;color:#E2E8F0;font-weight:600;display:flex;align-items:center;gap:8px}
+.card-title-icon{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px}
 .pin-badge{background:#0F172A;border:1px solid #334155;padding:3px 8px;border-radius:6px;font-size:10px;color:#94A3B8}
-.big-btn{width:100%;height:140px;border-radius:16px;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;font-weight:700}
+.delete-btn{position:absolute;top:-8px;right:-8px;width:28px;height:28px;background:#EF4444;color:white;border-radius:50%;border:2px solid #0F172A;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;font-weight:800;z-index:10;display:none}
+.card.edit-mode .delete-btn{display:flex}
+.big-btn{width:100%;height:120px;border-radius:16px;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;font-weight:700}
 .big-btn.on{background:#00D4FF;color:#0F172A}.big-btn.off{background:#334155;color:#94A3B8}
-.big{font-size:36px;font-weight:800}
+.big-btn .icon{width:48px;height:48px;border-radius:50%;border:2px solid currentColor;display:flex;align-items:center;justify-content:center;font-size:20px}
+.big{font-size:32px;font-weight:800}
 input[type=range]{width:100%;-webkit-appearance:none;height:6px;background:linear-gradient(90deg,#6366F1,#00D4FF);border-radius:3px}
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;background:white;border-radius:50%;cursor:pointer}
-.info-box{background:#1E293B;border:1px solid #334155;border-radius:16px;padding:20px;margin-top:20px}
-.chart-container{height:220px;background:#0F172A;border-radius:12px;padding:12px;border:1px solid #1E293B;position:relative}
-.chart-stats{display:flex;gap:12px;margin-top:8px}
-.stat{background:#0F172A;border:1px solid #1E293B;padding:6px 10px;border-radius:8px;font-size:10px}
-.stat span{color:#64748B}.stat strong{color:#E2E8F0;margin-left:4px}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,0.7);display:none;align-items:center;justify-content:center;z-index:100}
+.modal.show{display:flex}
+.modal-content{background:#1E293B;border:1px solid #334155;border-radius:20px;padding:24px;width:400px;max-width:90vw}
+.modal-title{font-size:16px;font-weight:700;margin-bottom:16px}
+.widget-option{padding:12px 16px;background:#0F172A;border:1px solid #334155;border-radius:12px;margin-bottom:8px;cursor:pointer;display:flex;align-items:center;gap:12px;transition:all 0.2s}
+.widget-option:hover{border-color:#00D4FF;background:rgba(0,212,255,0.1)}
+.form-group{margin-bottom:12px}
+.form-group label{font-size:11px;color:#94A3B8;display:block;margin-bottom:4px}
+.form-group input, .form-group select{width:100%;padding:10px 12px;background:#0F172A;border:1px solid #334155;border-radius:8px;color:#E2E8F0;font-size:13px}
+.btn{padding:10px 20px;border-radius:12px;border:none;font-weight:600;cursor:pointer;font-size:13px}
+.btn-primary{background:#00D4FF;color:#0F172A}.btn-secondary{background:#334155;color:#94A3B8}
 </style></head><body>
 <div class="sidebar">
-<div style="padding:8px 8px 20px;font-weight:800;font-size:16px;color:#00D4FF">BlynkForge Cloud<br><span style="font-size:10px;color:#F59E0B">+ Firebase + Real Chart</span></div>
+<div style="padding:8px 8px 20px;font-weight:800;font-size:16px;color:#00D4FF">BlynkForge<br><span style="font-size:10px;color:#22C55E">Widget Builder</span></div>
 <div class="sidebar-item active">📊 Dashboard</div>
 <div class="sidebar-item">📱 Devices</div>
 <div class="sidebar-item">📄 Templates</div>
-<div class="sidebar-item">📈 Data Logs <span style="background:#F59E0B;color:#0F172A;padding:2px 8px;border-radius:10px;font-size:10px;margin-left:8px" id="history-count">0</span></div>
-<div class="sidebar-item">⚙️ Settings & Code</div>
-<div style="margin-top:20px;padding:12px;background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);border-radius:12px;font-size:10px;color:#F59E0B">🔥 Firebase: Permanent<br>Chart: Real history from Firebase<br>Survives ALL restarts!</div>
+<div class="sidebar-item">📈 Data Logs <span style="background:#F59E0B;color:#0F172A;padding:2px 8px;border-radius:10px;font-size:10px;margin-left:8px" id="widget-count">0 widgets</span></div>
+<div style="margin-top:20px;padding:12px;background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.2);border-radius:12px;font-size:10px;color:#00D4FF">✏️ Blynk-style builder<br>• Click Edit Mode<br>• Add/Delete widgets<br>• Choose V0-V9 pins<br>• Saved to Firebase!</div>
 </div>
 <div class="main">
-<div class="topbar"><div style="font-weight:700">Dashboard - Real Firebase History Chart</div><div style="display:flex;gap:8px"><div class="badge firebase">🔥 Firebase: Permanent</div><div class="badge live"><span class="dot"></span> LIVE + REAL CHART</div></div></div>
+<div class="topbar">
+<div style="font-weight:700">Dashboard - Add/Delete Widgets Like Blynk</div>
+<div style="display:flex;gap:8px;align-items:center">
+<button class="btn-edit" id="edit-btn" onclick="toggleEdit()">✏️ Edit Mode</button>
+<button class="btn-add" onclick="openAddModal()">+ Add Widget</button>
+<div class="badge firebase">🔥 Firebase</div>
+<div class="badge live"><span class="dot"></span> LIVE</div>
+</div>
+</div>
 <div class="content">
-<div class="grid">
-<div class="card"><div class="card-header"><div class="card-title">Main Relay V0</div><span class="pin-badge">V0</span></div><button class="big-btn on" id="v0-btn" onclick="toggleV0()"><div id="v0-text">ON</div></button></div>
-<div class="card"><div class="card-header"><div class="card-title">Brightness V1 - <span id="v1-val">72</span>%</div><span class="pin-badge">V1</span></div><input type="range" id="v1" min="0" max="100" value="72" oninput="setV1(this.value)"><div class="big"><span id="v1d">72</span>%</div></div>
-<div class="card"><div class="card-header"><div class="card-title">Temperature V2</div><span class="pin-badge">V2</span></div><div class="big"><span id="v2">24.6</span>°C</div><div class="chart-stats"><div class="stat"><span>Min</span><strong id="t-min">22.0°C</strong></div><div class="stat"><span>Max</span><strong id="t-max">28.5°C</strong></div><div class="stat"><span>Avg</span><strong id="t-avg">24.6°C</strong></div></div></div>
+<div class="grid" id="widget-grid">
+<!-- Widgets will be rendered here -->
 </div>
-<div class="grid" style="grid-template-columns:1fr">
-<div class="card"><div class="card-header"><div class="card-title">📈 SuperChart — Real Temperature History from Firebase <span class="pin-badge" style="background:#F59E0B;color:#0F172A">🔥 Real Data</span></div><div style="display:flex;gap:8px"><div class="badge">Range: <span id="chart-range">Last 50 readings</span></div><div class="badge" style="color:#F59E0B">Source: Firebase history V2</div></div></div><div class="chart-container"><svg id="chart-svg" viewBox="0 0 400 140" preserveAspectRatio="none" style="width:100%;height:100%"><defs><linearGradient id="grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#00D4FF" stop-opacity="0.4"/><stop offset="100%" stop-color="#00D4FF" stop-opacity="0"/></linearGradient></defs><path id="chart-area" fill="url(#grad)" d="M0,120 L0,60 L400,60 L400,120 Z" opacity="0.5"/><polyline id="chart-line" fill="none" stroke="#00D4FF" stroke-width="2.5" points="0,60 400,60"/><circle id="chart-dot" cx="400" cy="60" r="5" fill="#00D4FF" stroke="#0F172A" stroke-width="2"/></svg></div><div style="display:flex;justify-content:space-between;margin-top:8px;font-size:10px;color:#64748B"><span id="chart-start">Loading Firebase history...</span><span>Real data from Firebase RTDB - Survives restarts!</span><span id="chart-end">Now</span></div></div>
+<div id="empty-state" style="text-align:center;padding:60px 20px;color:#64748B;display:none">
+<div style="font-size:48px;margin-bottom:16px">📦</div>
+<div style="font-size:16px;font-weight:600">No widgets yet</div>
+<div style="font-size:12px;margin-top:8px">Click + Add Widget to add Button, Slider, Gauge, Chart like Blynk!</div>
 </div>
-<div class="grid" style="grid-template-columns:2fr 1fr">
-<div class="card"><div class="card-header"><div class="card-title">💧 Humidity V3 + Firebase Permanent Logs</div><span class="pin-badge">V3</span></div><div class="big"><span id="v3">45</span>%</div><div style="height:6px;background:#0F172A;border-radius:3px;margin-top:12px;overflow:hidden"><div id="v3-bar" style="width:45%;height:100%;background:#22C55E"></div></div><div style="margin-top:16px"><div style="font-size:11px;color:#F59E0B">🔥 Firebase History (last 15):</div><div id="history" style="font-family:monospace;font-size:10px;color:#94A3B8;max-height:120px;overflow-y:auto;margin-top:8px;background:#0F172A;padding:8px;border-radius:8px">Loading from Firebase...</div></div></div>
-<div class="card"><div class="card-header"><div class="card-title">📊 Firebase Stats</div></div><div style="font-size:11px;color:#94A3B8;line-height:1.8"><div style="display:flex;justify-content:space-between"><span>Total logs</span><span style="color:#F59E0B" id="stat-total">0</span></div><div style="display:flex;justify-content:space-between"><span>V2 readings</span><span style="color:#00D4FF" id="stat-v2">0</span></div><div style="display:flex;justify-content:space-between"><span>V0 toggles</span><span style="color:#22C55E" id="stat-v0">0</span></div><div style="display:flex;justify-content:space-between"><span>Firebase URL</span><span style="color:#64748B;font-size:9px">asia-southeast1</span></div><div style="margin-top:12px;padding:8px;background:#0F172A;border-radius:8px;font-size:10px;color:#22C55E">✅ Chart loads real V2 data from Firebase<br>✅ Survives Render restarts<br>✅ Shows true min/max/avg</div></div></div>
 </div>
-</div></div>
+</div>
+
+<!-- Add Widget Modal -->
+<div class="modal" id="add-modal">
+<div class="modal-content">
+<div class="modal-title">+ Add Widget - Like Blynk App</div>
+<div id="step1">
+<div style="font-size:11px;color:#94A3B8;margin-bottom:12px">Choose widget type (like Blynk):</div>
+<div class="widget-option" onclick="selectType('button')"><div style="width:36px;height:36px;background:rgba(0,212,255,0.2);border-radius:8px;display:flex;align-items:center;justify-content:center">⏻</div><div><div style="font-weight:600">Button</div><div style="font-size:10px;color:#64748B">ON/OFF control - V0</div></div></div>
+<div class="widget-option" onclick="selectType('slider')"><div style="width:36px;height:36px;background:rgba(99,102,241,0.2);border-radius:8px;display:flex;align-items:center;justify-content:center">☰</div><div><div style="font-weight:600">Slider</div><div style="font-size:10px;color:#64748B">0-100% - V1</div></div></div>
+<div class="widget-option" onclick="selectType('gauge')"><div style="width:36px;height:36px;background:rgba(245,158,11,0.2);border-radius:8px;display:flex;align-items:center;justify-content:center">🌡️</div><div><div style="font-weight:600">Gauge</div><div style="font-size:10px;color:#64748B">Temperature, voltage - V2</div></div></div>
+<div class="widget-option" onclick="selectType('chart')"><div style="width:36px;height:36px;background:rgba(0,212,255,0.2);border-radius:8px;display:flex;align-items:center;justify-content:center">📈</div><div><div style="font-weight:600">SuperChart</div><div style="font-size:10px;color:#64748B">History chart - V2</div></div></div>
+<div class="widget-option" onclick="selectType('value')"><div style="width:36px;height:36px;background:rgba(34,197,94,0.2);border-radius:8px;display:flex;align-items:center;justify-content:center">💧</div><div><div style="font-weight:600">Labeled Value</div><div style="font-size:10px;color:#64748B">Display value - V3, V4</div></div></div>
+<div class="widget-option" onclick="selectType('led')"><div style="width:36px;height:36px;background:rgba(34,197,94,0.2);border-radius:8px;display:flex;align-items:center;justify-content:center">●</div><div><div style="font-weight:600">LED</div><div style="font-size:10px;color:#64748B">Status - V5</div></div></div>
+</div>
+<div id="step2" style="display:none">
+<div style="font-size:11px;color:#94A3B8;margin-bottom:12px">Configure widget:</div>
+<div class="form-group"><label>Widget Label (like Blynk)</label><input type="text" id="widget-label" placeholder="Main Relay"></div>
+<div class="form-group"><label>Datastream Pin V0-V9</label><select id="widget-pin"><option>V0</option><option>V1</option><option>V2</option><option>V3</option><option>V4</option><option>V5</option><option>V6</option><option>V7</option><option>V8</option><option>V9</option></select></div>
+<div class="form-group"><label>Icon (emoji)</label><input type="text" id="widget-icon" placeholder="⏻"></div>
+<div style="display:flex;gap:8px;margin-top:16px"><button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="addWidget()">+ Add to Dashboard</button></div>
+</div>
+</div>
+</div>
+
 <script>
+let widgets = [];
+let editMode = false;
+let selectedType = null;
 let v0=1,v1=72,v2=24.6,v3=45;
-let tempHistory = [];
 
-function drawRealChart(history){
-  const v2Data = history.filter(h => h.pin === 'V2').slice(-50);
-  if(v2Data.length === 0) return;
+function toggleEdit(){
+  editMode = !editMode;
+  document.getElementById('edit-btn').classList.toggle('active', editMode);
+  document.getElementById('edit-btn').textContent = editMode ? '✅ Done Editing' : '✏️ Edit Mode';
+  document.querySelectorAll('.card').forEach(c => c.classList.toggle('edit-mode', editMode));
+}
+
+function openAddModal(){
+  document.getElementById('add-modal').classList.add('show');
+  document.getElementById('step1').style.display = 'block';
+  document.getElementById('step2').style.display = 'none';
+  selectedType = null;
+}
+
+function closeModal(){
+  document.getElementById('add-modal').classList.remove('show');
+}
+
+function selectType(type){
+  selectedType = type;
+  document.getElementById('step1').style.display = 'none';
+  document.getElementById('step2').style.display = 'block';
+  const defaults = {
+    button: {label: 'Relay', icon: '⏻', pin: 'V0'},
+    slider: {label: 'Brightness', icon: '☰', pin: 'V1'},
+    gauge: {label: 'Temperature', icon: '🌡️', pin: 'V2'},
+    chart: {label: 'SuperChart', icon: '📈', pin: 'V2'},
+    value: {label: 'Humidity', icon: '💧', pin: 'V3'},
+    led: {label: 'Status LED', icon: '●', pin: 'V5'}
+  };
+  const d = defaults[type] || {label: 'New Widget', icon: '📦', pin: 'V0'};
+  document.getElementById('widget-label').value = d.label;
+  document.getElementById('widget-icon').value = d.icon;
+  document.getElementById('widget-pin').value = d.pin;
+}
+
+async function addWidget(){
+  const label = document.getElementById('widget-label').value || 'New Widget';
+  const pin = document.getElementById('widget-pin').value;
+  const icon = document.getElementById('widget-icon').value || '📦';
+  const id = 'w' + Date.now();
+  const widget = {id, type: selectedType, pin, label, icon, color: '#00D4FF'};
   
-  tempHistory = v2Data.map(h => parseFloat(h.value));
-  const min = Math.min(...tempHistory);
-  const max = Math.max(...tempHistory);
-  const avg = tempHistory.reduce((a,b)=>a+b,0)/tempHistory.length;
+  widgets.push(widget);
+  await saveWidgets();
+  renderWidgets();
+  closeModal();
+}
+
+async function deleteWidget(id){
+  if(!confirm('Delete this widget? Like Blynk - swipe to delete!')) return;
+  widgets = widgets.filter(w => w.id !== id);
+  await saveWidgets();
+  renderWidgets();
+}
+
+async function saveWidgets(){
+  try{
+    await fetch('/api/widgets', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(widgets)});
+  }catch(e){}
+  document.getElementById('widget-count').textContent = widgets.length + ' widgets';
+}
+
+function renderWidgets(){
+  const grid = document.getElementById('widget-grid');
+  const empty = document.getElementById('empty-state');
   
-  document.getElementById('t-min').textContent = min.toFixed(1)+'°C';
-  document.getElementById('t-max').textContent = max.toFixed(1)+'°C';
-  document.getElementById('t-avg').textContent = avg.toFixed(1)+'°C';
-  document.getElementById('stat-v2').textContent = v2Data.length;
-  document.getElementById('chart-range').textContent = `Last ${v2Data.length} readings`;
-  
-  const chartMin = min - 1;
-  const chartMax = max + 1;
-  const range = chartMax - chartMin || 1;
-  
-  const points = tempHistory.map((temp, i) => {
-    const x = (i / (tempHistory.length - 1)) * 400;
-    const y = 120 - ((temp - chartMin) / range) * 100 - 10;
-    return `${x},${y}`;
-  }).join(' ');
-  
-  document.getElementById('chart-line').setAttribute('points', points);
-  const areaPoints = points + ` 400,120 0,120`;
-  document.getElementById('chart-area').setAttribute('d', `M${points} L400,120 L0,120 Z`);
-  
-  const last = tempHistory[tempHistory.length-1];
-  const lastX = 400;
-  const lastY = 120 - ((last - chartMin) / range) * 100 - 10;
-  document.getElementById('chart-dot').setAttribute('cx', lastX);
-  document.getElementById('chart-dot').setAttribute('cy', lastY);
-  
-  if(v2Data.length > 0){
-    document.getElementById('chart-start').textContent = new Date(v2Data[0].time).toLocaleTimeString();
-    document.getElementById('chart-end').textContent = new Date(v2Data[v2Data.length-1].time).toLocaleTimeString();
+  if(widgets.length === 0){
+    grid.innerHTML = '';
+    empty.style.display = 'block';
+    return;
   }
+  empty.style.display = 'none';
+  
+  grid.innerHTML = widgets.map(w => {
+    let content = '';
+    if(w.type === 'button'){
+      content = `<button class="big-btn on" id="btn-${w.id}" onclick="togglePin('${w.pin}')"><div class="icon">${w.icon}</div><div id="text-${w.id}">ON</div></button>`;
+    } else if(w.type === 'slider'){
+      content = `<div class="big"><span id="val-${w.id}">72</span>%</div><input type="range" id="slider-${w.id}" min="0" max="100" value="72" oninput="setPin('${w.pin}', this.value, '${w.id}')">`;
+    } else if(w.type === 'gauge'){
+      content = `<div class="big"><span id="val-${w.id}">24.6</span>°C</div><div style="height:60px;background:#0F172A;border-radius:10px;margin-top:12px;display:flex;align-items:center;justify-content:center;font-size:24px">🌡️</div>`;
+    } else if(w.type === 'chart'){
+      content = `<div style="height:160px;background:#0F172A;border-radius:12px;padding:8px"><svg viewBox="0 0 400 100" style="width:100%;height:100%"><polyline id="chart-${w.id}" fill="none" stroke="#00D4FF" stroke-width="2" points="0,50 100,30 200,60 300,20 400,40"/></svg></div>`;
+    } else if(w.type === 'value'){
+      content = `<div class="big"><span id="val-${w.id}">45</span><span style="font-size:14px;color:#64748B">%</span></div>`;
+    } else if(w.type === 'led'){
+      content = `<div style="width:40px;height:40px;background:#22C55E;border-radius:50%;margin:20px auto;box-shadow:0 0 20px #22C55E" id="led-${w.id}"></div><div style="text-align:center;font-size:12px" id="val-${w.id}">ON</div>`;
+    }
+    
+    return `
+      <div class="card ${editMode ? 'edit-mode' : ''}" id="card-${w.id}">
+        <div class="delete-btn" onclick="deleteWidget('${w.id}')">×</div>
+        <div class="card-header">
+          <div class="card-title"><div class="card-title-icon" style="background:rgba(0,212,255,0.2)">${w.icon}</div> ${w.label}</div>
+          <span class="pin-badge">${w.pin}</span>
+        </div>
+        ${content}
+        <div style="font-size:10px;color:#475569;margin-top:12px">Pin ${w.pin} • ${w.type}</div>
+      </div>
+    `;
+  }).join('');
+  
+  // Update edit mode classes
+  document.querySelectorAll('.card').forEach(c => {
+    if(editMode) c.classList.add('edit-mode');
+  });
 }
 
-async function toggleV0(){v0=v0?0:1;const b=document.getElementById('v0-btn');const t=document.getElementById('v0-text');if(v0){b.className='big-btn on';t.textContent='ON';}else{b.className='big-btn off';t.textContent='OFF';}await fetch('/api/device/esp32_01/V0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:v0})});}
-async function setV1(v){v1=v;document.getElementById('v1-val').textContent=v;document.getElementById('v1d').textContent=v;await fetch('/api/device/esp32_01/V1',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:parseInt(v)})});}
-async function syncAll(){
+async function togglePin(pin){
+  const id = widgets.find(w => w.pin === pin)?.id;
+  if(!id) return;
+  const current = v0;
+  const newVal = current ? 0 : 1;
+  if(pin === 'V0') v0 = newVal;
+  await fetch(`/api/device/esp32_01/${pin}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({value: newVal})});
+  document.getElementById(`text-${id}`).textContent = newVal ? 'ON' : 'OFF';
+  document.getElementById(`btn-${id}`).className = 'big-btn ' + (newVal ? 'on' : 'off');
+}
+
+async function setPin(pin, val, widgetId){
+  document.getElementById(`val-${widgetId}`).textContent = val;
+  await fetch(`/api/device/esp32_01/${pin}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({value: parseInt(val)})});
+  if(pin === 'V1') v1 = parseInt(val);
+}
+
+async function loadWidgets(){
   try{
-    const r0=await fetch('/api/device/esp32_01/V0');const j0=await r0.json();if(j0.value!==undefined && j0.value!=v0){v0=j0.value;const b=document.getElementById('v0-btn');const t=document.getElementById('v0-text');if(v0){b.className='big-btn on';t.textContent='ON';}else{b.className='big-btn off';t.textContent='OFF';}}
-    const r1=await fetch('/api/device/esp32_01/V1');const j1=await r1.json();if(j1.value!==undefined){v1=j1.value;document.getElementById('v1-val').textContent=v1;document.getElementById('v1d').textContent=v1;document.getElementById('v1').value=v1;}
-    const r2=await fetch('/api/device/esp32_01/V2');const j2=await r2.json();if(j2.value){v2=j2.value;document.getElementById('v2').textContent=v2;}
-    const r3=await fetch('/api/device/esp32_01/V3');const j3=await r3.json();if(j3.value){v3=j3.value;document.getElementById('v3').textContent=v3;document.getElementById('v3-bar').style.width=v3+'%';}
-  }catch(e){}
+    const r = await fetch('/api/widgets');
+    const data = await r.json();
+    if(Array.isArray(data) && data.length > 0){
+      widgets = data;
+    }
+  }catch(e){
+    console.log('Using default widgets');
+  }
+  renderWidgets();
+  document.getElementById('widget-count').textContent = widgets.length + ' widgets';
+}
+
+async function syncData(){
   try{
-    const hr=await fetch('/api/history');const h=await hr.json();
-    document.getElementById('history').innerHTML=h.slice(-15).reverse().map(x=>`${x.time.split('T')[1].split('.')[0]} ${x.pin}=${x.value}`).join('<br>');
-    document.getElementById('history-count').textContent=h.length;
-    document.getElementById('stat-total').textContent=h.length;
-    document.getElementById('stat-v0').textContent=h.filter(x=>x.pin==='V0').length;
-    drawRealChart(h);
+    const r0 = await fetch('/api/device/esp32_01/V0'); const j0 = await r0.json();
+    if(j0.value !== undefined) v0 = j0.value;
+    const r1 = await fetch('/api/device/esp32_01/V1'); const j1 = await r1.json();
+    if(j1.value !== undefined) v1 = j1.value;
+    const r2 = await fetch('/api/device/esp32_01/V2'); const j2 = await r2.json();
+    if(j2.value !== undefined) v2 = j2.value;
+    const r3 = await fetch('/api/device/esp32_01/V3'); const j3 = await r3.json();
+    if(j3.value !== undefined) v3 = j3.value;
+    
+    widgets.forEach(w => {
+      const valEl = document.getElementById(`val-${w.id}`);
+      const textEl = document.getElementById(`text-${w.id}`);
+      if(!valEl && !textEl) return;
+      let val = 0;
+      if(w.pin === 'V0') val = v0;
+      else if(w.pin === 'V1') val = v1;
+      else if(w.pin === 'V2') val = v2;
+      else if(w.pin === 'V3') val = v3;
+      
+      if(w.type === 'button' && textEl){
+        textEl.textContent = val ? 'ON' : 'OFF';
+        const btn = document.getElementById(`btn-${w.id}`);
+        if(btn) btn.className = 'big-btn ' + (val ? 'on' : 'off');
+      } else if(valEl){
+        if(w.type === 'value' || w.type === 'gauge') valEl.textContent = val;
+        else if(w.type === 'slider') {
+          // Don't override if user is dragging
+        }
+      }
+    });
   }catch(e){}
 }
-setInterval(syncAll,1500);
-syncAll();
+
+loadWidgets();
+setInterval(syncData, 1000);
+
+// Close modal on outside click
+document.getElementById('add-modal').addEventListener('click', (e) => {
+  if(e.target.id === 'add-modal') closeModal();
+});
 </script></body></html>
 """
 
 @app.route('/')
 def index(): return HTML
+
+@app.route('/api/widgets', methods=['GET','POST'])
+def handle_widgets():
+    global widgets
+    if request.method == 'POST':
+        data = request.get_json()
+        if isinstance(data, list):
+            widgets = data
+            save_data()
+        return jsonify({"success": True, "count": len(widgets)})
+    return jsonify(widgets)
 
 @app.route('/api/devices')
 def get_devices(): return jsonify(devices)
@@ -230,6 +424,6 @@ def device_update(device_id):
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
-    print(f"Firebase: {FIREBASE_DB_URL}")
-    print(f"History: {len(history)} entries - Chart loads REAL data from Firebase!")
+    print(f"BlynkForge Widget Builder - Add/Delete like Blynk")
+    print(f"Widgets: {len(widgets)} - Firebase: {FIREBASE_DB_URL}")
     app.run(host='0.0.0.0', port=port, debug=False)
